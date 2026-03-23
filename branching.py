@@ -27,21 +27,16 @@ from airflow.operators.empty import EmptyOperator
 from airflow.providers.common.sql.operators.sql import (
     BranchSQLOperator,
     SQLExecuteQueryOperator,
-)
+    )
 
 
 @dag(
-    dag_id="branching_demo",
-    start_date=datetime(2024, 1, 1),
-    schedule=None,
-    catchup=False,
-    tags=["demo"],
     params={
         "express_open": Param(True,  type="boolean", description="Is the express route open?"),
         "needs_gas":    Param(False, type="boolean", description="Does the driver need gas?"),
     },
 )
-def branching_demo():
+def branching():
 
     # ── Branch 1: Is the express route open? ─────────────────
     # The SQL expression renders the boolean param directly as
@@ -54,13 +49,13 @@ def branching_demo():
         sql="SELECT {{ 1 if params.express_open else 0 }}",
         follow_task_ids_if_true=["take_express_route"],
         follow_task_ids_if_false=["check_needs_gas"],
-    )
+        )
 
     take_express_route = SQLExecuteQueryOperator(
         task_id="take_express_route",
         conn_id="roads_db",
         sql="SELECT road_name, avg_speed FROM roads WHERE level = 'express' ORDER BY RANDOM() LIMIT 1",
-    )
+        )
 
 
     # ── Branch 2: Does the driver need gas? ──────────────────
