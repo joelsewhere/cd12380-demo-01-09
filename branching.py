@@ -1,27 +1,3 @@
-# ============================================================
-#  DEMONSTRATION: Airflow Branching
-# ============================================================
-#
-#  This DAG models the decision a driver makes before setting
-#  off on a journey.
-#
-#  Two BranchSQLOperators drive the routing logic:
-#
-#    1. check_express_open
-#         Is the express route available?
-#         YES → take_express_route → arrive
-#         NO  → check_needs_gas
-#
-#    2. check_needs_gas
-#         Does the driver need to stop for gas first?
-#         YES → visit_gas_station → take_standard_route → arrive
-#         NO  →                     take_standard_route → arrive
-#
-#  Params let you toggle each condition from the Airflow UI
-#  without needing a live database.
-# ============================================================
-
-
 from airflow.sdk import dag, task, Param
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.common.sql.operators.sql import (
@@ -32,28 +8,33 @@ from airflow.providers.common.sql.operators.sql import (
 
 @dag(
     params={
-        "express_open": Param(True,  type="boolean", description="Is the express route open?"),
-        "needs_gas":    Param(False, type="boolean", description="Does the driver need gas?"),
-    },
-)
+        "express_open": Param(
+            True, 
+            type="boolean",
+            description="Is the express route open?"
+            ),
+        "needs_gas": Param(
+            False,
+            type="boolean",
+            description="Does the driver need gas?"
+            ),
+        },
+    )
 def branching():
 
     # ── Branch 1: Is the express route open? ─────────────────
-    # The SQL expression renders the boolean param directly as
-    # 1 (true) or 0 (false), giving BranchSQLOperator a
-    # reliable truthy/falsy result without needing live data.
-
+    # The SQL expression requires a single truthy/falsy return value
     check_express_open = BranchSQLOperator(
         task_id="check_express_open",
-        conn_id="roads_db",
-        sql="SELECT {{ 1 if params.express_open else 0 }}",
+        conn_id="roads",
+        sql="SELECT {{ params.express_open }}",
         follow_task_ids_if_true=["take_express_route"],
         follow_task_ids_if_false=["check_needs_gas"],
         )
 
     take_express_route = SQLExecuteQueryOperator(
         task_id="take_express_route",
-        conn_id="roads_db",
+        conn_id="roads",
         sql="SELECT road_name, avg_speed FROM roads WHERE level = 'express' ORDER BY RANDOM() LIMIT 1",
         )
 
@@ -62,14 +43,13 @@ def branching():
     # Only reached if the express route is closed.
     # @task.branch reads the param directly in Python and
     # returns the task_id of the next task to run.
-
     @task.branch
-    def check_needs_gas(needs_gas: bool):
-        if needs_gas:
+    def check_needs_gas(params):
+        if params['needs_gas']:
             return "visit_gas_station"
         return "take_standard_route"
 
-    gas_branch = check_needs_gas("{{ params.needs_gas }}")
+    gas_branch = check_needs_gas()
 
     visit_gas_station = EmptyOperator(task_id="visit_gas_station")
 
@@ -80,7 +60,7 @@ def branching():
     # task under the default all_success rule.
     take_standard_route = SQLExecuteQueryOperator(
         task_id="take_standard_route",
-        conn_id="roads_db",
+        conn_id="roads",
         sql="SELECT road_name, avg_speed FROM roads WHERE level = 'standard' ORDER BY RANDOM() LIMIT 1",
         trigger_rule="none_failed_min_one_success",
     )
@@ -90,7 +70,6 @@ def branching():
     # All active paths converge here.
     # Same trigger_rule reasoning — one upstream branch is
     # always skipped.
-
     arrive = EmptyOperator(
         task_id="arrive",
         trigger_rule="none_failed_min_one_success",
@@ -98,12 +77,11 @@ def branching():
 
 
     # ── Dependencies ─────────────────────────────────────────
-
-    check_express_open >> take_express_route >> arrive
-    check_express_open >> gas_branch
-    gas_branch         >> visit_gas_station >> take_standard_route
-    gas_branch         >> take_standard_route
+    check_express_open  >> take_express_route >> arrive
+    check_express_open  >> gas_branch
+    gas_branch          >> visit_gas_station  >> take_standard_route
+    gas_branch          >> take_standard_route
     take_standard_route >> arrive
 
 
-branching_demo()
+branching()
